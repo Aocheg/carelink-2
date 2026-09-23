@@ -20,6 +20,28 @@ class PatientIn(Input):
         if self.allergy_status != bool(self.allergy_details): raise ValueError("allergy status and details must agree")
         return self
 
+class FreshAdmissionIn(Input):
+    full_name: str = Field(min_length=2, max_length=160)
+    date_of_birth: date
+    sex: str
+    phone_number: Optional[str] = None
+    address: Optional[str] = None
+    blood_group: Optional[str] = None
+    genotype: Optional[str] = None
+    allergy_status: bool = False
+    allergy_details: Optional[str] = None
+    ward_id: int
+    bed_id: int
+    admitted_by: int
+    source: str
+    reason_for_admission: str
+
+    @model_validator(mode="after")
+    def allergy_consistency(self):
+        if self.allergy_status != bool(self.allergy_details):
+            raise ValueError("allergy status and details must agree")
+        return self
+
 class UserIn(Input): username: str; password: str = Field(min_length=8); full_name: str; role: str = "NURSE"
 class FacilityIn(Input): name: str; description: Optional[str] = None
 class WardIn(Input): facility_id: int; name: str

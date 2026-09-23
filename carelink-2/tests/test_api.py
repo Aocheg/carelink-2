@@ -113,3 +113,21 @@ def test_admission_options_only_returns_available_beds_and_invalid_ward_bed_is_r
     })
     assert mismatch.status_code == 422
     assert mismatch.json()["detail"] == "bed does not belong to ward"
+
+
+def test_fresh_admission_registers_patient_and_admission_atomically():
+    c = client(); bootstrap_login(c)
+    facility = c.post("/api/facilities", json={"name":"Fresh Hospital","description":"Main"}).json()
+    ward = c.post("/api/wards", json={"facility_id":facility["id"],"name":"Emergency"}).json()
+    bed = c.post("/api/beds", json={"ward_id":ward["id"],"bed_number":"E-01"}).json()
+    r = c.post("/api/fresh-admissions", json={
+        "full_name":"Fresh Patient","date_of_birth":"1995-05-05","sex":"F",
+        "phone_number":"08000000000","allergy_status":False,
+        "ward_id":ward["id"],"bed_id":bed["id"],"admitted_by":1,
+        "source":"EMERGENCY","reason_for_admission":"Acute assessment"
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert body["patient"]["patient_number"] == "CL-000001"
+    assert body["admission"]["status"] == "ACTIVE"
+    assert c.get("/api/admission-options").json()["beds"] == []

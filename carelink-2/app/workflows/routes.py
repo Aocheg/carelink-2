@@ -158,6 +158,43 @@ def admissions(data:s.AdmissionIn,db:Session=Depends(get_db),actor:m.User=Depend
     actor_matches(actor,data.admitted_by)
     return out(service.create_admission(db,data,actor.id))
 
+@r.post("/fresh-admissions", status_code=201)
+def fresh_admission(data:s.FreshAdmissionIn, db:Session=Depends(get_db), actor:m.User=Depends(current_user)):
+    """Register a first-time patient and admit them in one transaction."""
+    actor_matches(actor, data.admitted_by)
+    ward = service.get(db, m.Ward, data.ward_id)
+    bed = service.get(db, m.Bed, data.bed_id)
+    service.active_user(db, data.admitted_by)
+    if bed.ward_id != ward.id:
+        service.fail(422, "bed does not belong to ward")
+    if bed.status != "AVAILABLE":
+        service.fail(409, "bed is not available")
+    duplicate = db.scalar(select(m.Patient).where(
+        func.lower(m.Patient.full_name) == data.full_name.lower(),
+        m.Patient.date_of_birth == data.date_of_birth
+    ))
+    patient = m.Patient(
+        patient_number=service.numbered(db, m.Patient, "CL", "id"),
+        full_name=data.full_name, date_of_birth=data.date_of_birth, sex=data.sex,
+        phone_number=data.phone_number, address=data.address, blood_group=data.blood_group,
+        genotype=data.genotype, allergy_status=data.allergy_status, allergy_details=data.allergy_details,
+    )
+    db.add(patient); db.flush()
+    active = db.scalar(select(m.Admission).where(m.Admission.patient_id == patient.id, m.Admission.status == "ACTIVE"))
+    if active:
+        service.fail(409, "patient already has an active admission")
+    admission = m.Admission(
+        admission_number=service.numbered(db, m.Admission, "AD", "id"),
+        admitted_at=service.utcnow(), status="ACTIVE", patient_id=patient.id, ward_id=ward.id,
+        bed_id=bed.id, source=data.source, reason_for_admission=data.reason_for_admission, admitted_by=data.admitted_by,
+    )
+    bed.status = "OCCUPIED"
+    db.add(admission); db.flush()
+    service.audit(db, "CREATE", "Patient", patient, actor.id, "fresh admission")
+    service.audit(db, "CREATE", "Admission", admission, actor.id, "fresh admission")
+    service.commit(db)
+    return {"patient": {**out(patient), "possible_duplicate": bool(duplicate)}, "admission": out(admission)}
+
 @r.get("/admissions")
 def admissions_list(db:Session=Depends(get_db), _:m.User=Depends(current_user)): return list_for(db,m.Admission)
 
