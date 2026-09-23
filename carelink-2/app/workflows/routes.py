@@ -138,6 +138,21 @@ def patient_admissions(patient_id:int,db:Session=Depends(get_db), _:m.User=Depen
     service.get(db,m.Patient,patient_id)
     return list_for(db,m.Admission,"patient_id",patient_id)
 
+@r.get("/admission-options")
+def admission_options(db:Session=Depends(get_db), _:m.User=Depends(current_user)):
+    """Return the current database-backed choices needed to create an admission.
+
+    Only beds that are currently AVAILABLE are returned so the UI cannot offer
+    occupied beds as admission choices. The admission service remains the final
+    authorization/consistency check.
+    """
+    patients = list_for(db, m.Patient)
+    wards = list_for(db, m.Ward)
+    beds = [out(bed) for bed in db.scalars(
+        select(m.Bed).where(m.Bed.status == "AVAILABLE").order_by(m.Bed.ward_id, m.Bed.bed_number)
+    ).all()]
+    return {"patients": patients, "wards": wards, "beds": beds}
+
 @r.post("/admissions",status_code=201)
 def admissions(data:s.AdmissionIn,db:Session=Depends(get_db),actor:m.User=Depends(current_user)):
     actor_matches(actor,data.admitted_by)

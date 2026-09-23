@@ -85,7 +85,7 @@ pre{background:#102333;color:#d9edf7;border-color:#1c3b51}.output-card{backgroun
 </div></section>
 
 <section id="admission" class="tabpane hidden"><div class="grid">
-<div class="card role-card" data-roles="ADMIN,STAFF,NURSE"><h3>Admit patient</h3><label>Patient ID</label><input id="aPatient" type="number"><label>Ward ID</label><input id="aWard" type="number"><label>Bed ID</label><input id="aBed" type="number"><label>Source</label><input id="aSource" value="OPD"><label>Reason</label><textarea id="aReason"></textarea><button onclick="createAdmission()">Admit</button></div>
+<div class="card role-card" data-roles="ADMIN,STAFF,NURSE"><h3>Admit patient</h3><p class="role-help">Choose from live CARELINK records. Only currently available beds for the selected ward are shown.</p><label>Patient</label><select id="aPatient"><option value="">Loading patients…</option></select><label>Ward</label><select id="aWard"><option value="">Loading wards…</option></select><label>Available bed</label><select id="aBed" disabled><option value="">Select a ward first</option></select><div id="admissionAvailability" class="notice">Loading admission options…</div><label>Source</label><input id="aSource" value="OPD"><label>Reason</label><textarea id="aReason"></textarea><button id="admitButton" onclick="createAdmission()" disabled>Admit patient</button></div>
 <div class="card"><h3>Admission lookup</h3><label>Admission ID</label><input id="aLookup" type="number"><button onclick="loadAdmission()">Load</button><pre id="admissionOut">—</pre></div>
 <div class="card wide role-card" data-roles="ADMIN,NURSE,DOCTOR"><h3>Record vitals</h3><label>Admission ID</label><input id="vAdmission" type="number"><div class="row"><div><label>Systolic BP</label><input id="sys" type="number"></div><div><label>Diastolic BP</label><input id="dia" type="number"></div><div><label>Pulse</label><input id="pulse" type="number"></div><div><label>Temperature</label><input id="temp" type="number" step=".1"></div><div><label>Respiratory rate</label><input id="rr" type="number"></div><div><label>SpO₂</label><input id="spo2" type="number" step=".1"></div></div><label>Status</label><select id="vStatus"><option>COMPLETE</option><option>PARTIAL</option><option>NOT_MEASURED</option></select><label>Reason if partial/not measured</label><input id="vReason"><button onclick="recordVitals()">Record vitals</button><pre id="vitalOut">—</pre></div>
 </div></section>
@@ -182,17 +182,40 @@ function applyRoleAwareness(){
 async function api(path,opts={}){
   const headers={"Content-Type":"application/json",...(opts.headers||{})}; if(token)headers.Authorization="Bearer "+token;
   const r=await fetch(path,{...opts,headers}); let body={}; try{body=await r.json()}catch{}
-  if(!r.ok){const msg=body.detail||`Request failed (HTTP ${r.status})`; throw new Error(msg)} return body;
+  if(!r.ok){
+    let msg=body.detail;
+    if(Array.isArray(msg)) msg=msg.map(x=>x?.msg||x?.detail||String(x)).join("; ");
+    if(msg&&typeof msg==="object") msg=msg.message||msg.detail||JSON.stringify(msg);
+    throw new Error(msg||`Request failed (HTTP ${r.status})`);
+  }
+  return body;
 }
 async function login(){try{const x=await api("/api/auth/login",{method:"POST",body:JSON.stringify({username:$("loginUser").value,password:$("loginPass").value})});token=x.access_token;localStorage.setItem("carelink_token",token);await start()}catch(e){showMsg(e.message)}}
 async function bootstrap(){try{const x=await api("/api/auth/bootstrap",{method:"POST",body:JSON.stringify({username:$("loginUser").value,password:$("loginPass").value,full_name:"CARELINK Administrator"})});showMsg(x.message+". You can now sign in.",true)}catch(e){showMsg(e.message)}}
-async function start(){try{me=await api("/api/auth/me");$("login").classList.add("hidden");$("app").classList.remove("hidden");$("session").innerHTML=`${escapeHtml(me.full_name)} · ${escapeHtml(ROLE_LABELS[me.role]||me.role)} <button class="logout" onclick="logout()">Sign out</button>`;$("who").textContent=me.full_name;$("role").innerHTML=`<span class="badge ok">${escapeHtml(ROLE_LABELS[me.role]||me.role)}</span>`;applyRoleAwareness();setRoleDashboard();checkHealth();loadPatients();loadAlerts()}catch(e){logout()}}
+async function start(){try{me=await api("/api/auth/me");$("login").classList.add("hidden");$("app").classList.remove("hidden");$("session").innerHTML=`${escapeHtml(me.full_name)} · ${escapeHtml(ROLE_LABELS[me.role]||me.role)} <button class="logout" onclick="logout()">Sign out</button>`;$("who").textContent=me.full_name;$("role").innerHTML=`<span class="badge ok">${escapeHtml(ROLE_LABELS[me.role]||me.role)}</span>`;applyRoleAwareness();setRoleDashboard();checkHealth();loadPatients();loadAlerts();loadAdmissionOptions()}catch(e){logout()}}
 function setRoleDashboard(){const messages={ADMIN:"Full system control: users, facilities, patients, admissions, clinical workflows, investigations, safety and audit.",DOCTOR:"Clinical decision workspace: patients, assessments, prescriptions, clinical orders, investigations, alerts and discharge.",NURSE:"Nursing workspace: admissions, vitals, prescribed medicines, medication administration, handovers, investigations and safety.",LAB:"Laboratory workspace: investigation requests, processing, results and clinical alerts.",STAFF:"Patient support workspace: patient registration, admissions, investigation requests and safety information."};const msg=messages[me?.role]||"Your CARELINK workspace is configured for your assigned role.";const p=$("roleMessage");if(p)p.textContent=msg;const q=$("roleMessageLong");if(q)q.textContent=msg;}
 function logout(){token=null;localStorage.removeItem("carelink_token");location.reload()}
 function result(id,x,title="CARELINK update"){renderData(id,x,title)}
 async function checkHealth(){try{const x=await fetch("/health").then(r=>r.json());$("health").textContent=x.status.toUpperCase();if($("systemState"))$("systemState").textContent="Live"}catch{$("health").textContent="OFFLINE";if($("systemState"))$("systemState").textContent="Offline"}}
 async function run(action,fn,out,title){if(!requireRole(action))return;try{const x=await fn();if(out)result(out,x,title);notify(title||"Action completed successfully");return x}catch(e){notify(humanError(e.message),"error")}}
-function humanError(msg){const m=String(msg||"");if(/requires? a doctor|required role.*DOCTOR/i.test(m))return"Doctor authorization is required for this workflow.";if(/required role.*LAB/i.test(m))return"Laboratory authorization is required to enter this result.";if(/not found/i.test(m))return"The requested record could not be found. Please check the ID and try again.";if(/inactive/i.test(m))return"This account is inactive. Please contact the administrator.";if(/validation|invalid|must be/i.test(m))return"Please check the entered information and required fields, then try again.";return"CARELINK could not complete this request. Please review the information and try again."}
+function humanError(msg){
+  const m=String(msg||"").trim();
+  if(/bed does not belong to ward/i.test(m)) return "The selected bed does not belong to the selected ward. Please choose an available bed from this ward.";
+  if(/bed is not available/i.test(m)) return "The selected bed is no longer available. Refresh the admission options and choose another bed.";
+  if(/patient already has an active admission/i.test(m)) return "This patient already has an active admission. Discharge the current admission before creating another one.";
+  if(/patient not found/i.test(m)) return "The selected patient could not be found. Refresh the patient list and try again.";
+  if(/ward not found/i.test(m)) return "The selected ward could not be found. Refresh the admission options and try again.";
+  if(/bed not found/i.test(m)) return "The selected bed could not be found. Refresh the admission options and try again.";
+  if(/admission not found/i.test(m)) return "The admission could not be found. Please check the admission number and try again.";
+  if(/requires? a doctor|required role.*DOCTOR/i.test(m)) return "Doctor authorization is required for this workflow.";
+  if(/required role.*LAB/i.test(m)) return "Laboratory authorization is required to enter this result.";
+  if(/inactive/i.test(m)) return "This account is inactive. Please contact the administrator.";
+  if(/actor_id must match/i.test(m)) return "The signed-in user does not match the staff member recorded for this action.";
+  if(/no available beds/i.test(m)) return "There are no available beds in the selected ward. Choose another ward or create an available bed.";
+  if(/validation|invalid|must be/i.test(m)) return "Please check the entered information and required fields, then try again.";
+  if(/operation conflicts/i.test(m)) return "CARELINK could not save this change because it conflicts with an existing record. Refresh the page and try again.";
+  return m ? `CARELINK could not complete this request. ${m}` : "CARELINK could not complete this request. Please review the information and try again.";
+}
 async function createFacility(){run("foundation",()=>api("/api/facilities",{method:"POST",body:JSON.stringify({name:$("facName").value,description:$("facDesc").value})}),"foundationOut","Facility created")}
 async function createWard(){run("foundation",()=>api("/api/wards",{method:"POST",body:JSON.stringify({facility_id:+$("wardFacility").value,name:$("wardName").value})}),"foundationOut","Ward created")}
 async function createBed(){run("foundation",()=>api("/api/beds",{method:"POST",body:JSON.stringify({ward_id:+$("bedWard").value,bed_number:$("bedNo").value})}),"foundationOut","Bed created")}
@@ -200,7 +223,49 @@ async function getFoundation(){if(!requireRole("foundation"))return;try{const [f
 async function createPatient(){const allergy=$("pAllergy").checked;const x=await run("patient-register",()=>api("/api/patients",{method:"POST",body:JSON.stringify({full_name:$("pName").value,date_of_birth:$("pDob").value,sex:$("pSex").value,phone_number:$("pPhone").value,address:$("pAddress").value,blood_group:$("pBlood").value||null,genotype:$("pGenotype").value||null,allergy_status:allergy,allergy_details:allergy?$("pAllergyDetails").value:null})}),"patientsOut","Patient registered");if(x)loadPatients()}
 async function loadPatients(){try{const x=await api("/api/patients");$("patientCount").textContent=x.length;result("patientsOut",x,"Patients") }catch(e){$("patientCount").textContent="—"}}
 async function addKin(){run("patient-kin",()=>api(`/api/patients/${+$('kinPatient').value}/next-of-kin`,{method:"POST",body:JSON.stringify({full_name:$("kinName").value,relationship:$("kinRel").value,phone_number:$("kinPhone").value,address:$("kinAddress").value||null,is_primary:true})}),"patientsOut","Next of kin added")}
-async function createAdmission(){const x=await run("admit",()=>api("/api/admissions",{method:"POST",body:JSON.stringify({patient_id:+$("aPatient").value,ward_id:+$("aWard").value,bed_id:+$("aBed").value,admitted_by:me.id,source:$("aSource").value,reason_for_admission:$("aReason").value})}),"admissionOut","Patient admitted");if(x){$("aLookup").value=x.id;$("vAdmission").value=x.id}}
+let admissionOptions={patients:[],wards:[],beds:[]};
+function setAdmissionAvailability(text,type="notice"){const el=$("admissionAvailability");if(!el)return;el.className=`notice ${type}`;el.textContent=text}
+function refreshBedChoices(){
+  const wardId=Number($("aWard").value);
+  const bedSelect=$("aBed"), button=$("admitButton");
+  bedSelect.innerHTML="";
+  const beds=admissionOptions.beds.filter(b=>Number(b.ward_id)===wardId && b.status==="AVAILABLE");
+  if(!wardId){bedSelect.disabled=true;bedSelect.innerHTML='<option value="">Select a ward first</option>';button.disabled=true;setAdmissionAvailability("Select a ward to see its available beds.");return;}
+  if(!beds.length){bedSelect.disabled=true;bedSelect.innerHTML='<option value="">No available beds</option>';button.disabled=true;setAdmissionAvailability("There are currently no available beds in this ward. Choose another ward or ask an administrator to create/release a bed.","error");return;}
+  bedSelect.disabled=false;
+  bedSelect.innerHTML='<option value="">Select an available bed…</option>'+beds.map(b=>`<option value="${b.id}">${escapeHtml(b.bed_number)} — Available</option>`).join("");
+  button.disabled=true;
+  setAdmissionAvailability(`${beds.length} available bed${beds.length===1?"":"s"} in this ward.`);
+}
+function updateAdmissionButton(){
+  const ready=!!$("aPatient").value&&!!$("aWard").value&&!!$("aBed").value;
+  $("admitButton").disabled=!ready;
+}
+async function loadAdmissionOptions(){
+  if(!roleAllowed("admit"))return;
+  try{
+    admissionOptions=await api("/api/admission-options");
+    const patientSelect=$("aPatient"), wardSelect=$("aWard");
+    patientSelect.innerHTML='<option value="">Select a patient…</option>'+admissionOptions.patients.map(p=>`<option value="${p.id}">${escapeHtml(p.patient_number)} — ${escapeHtml(p.full_name)}</option>`).join("");
+    wardSelect.innerHTML='<option value="">Select a ward…</option>'+admissionOptions.wards.map(w=>`<option value="${w.id}">${escapeHtml(w.name)}</option>`).join("");
+    $("aBed").innerHTML='<option value="">Select a ward first</option>';
+    $("aBed").disabled=true;
+    $("admitButton").disabled=true;
+    setAdmissionAvailability(admissionOptions.patients.length?"Select a patient and ward to continue.":"No patients are registered yet. Register a patient first.", admissionOptions.patients.length?"notice":"error");
+  }catch(e){
+    setAdmissionAvailability(humanError(e.message),"error");
+  }
+}
+async function createAdmission(){
+  if(!requireRole("admit"))return;
+  const patientId=Number($("aPatient").value), wardId=Number($("aWard").value), bedId=Number($("aBed").value);
+  const bed=admissionOptions.beds.find(b=>Number(b.id)===bedId);
+  if(!patientId||!wardId||!bedId)return notify("Please select a patient, ward and available bed before admitting the patient.","warn");
+  if(!bed||Number(bed.ward_id)!==wardId||bed.status!=="AVAILABLE"){refreshBedChoices();return notify("That bed is not valid for the selected ward. Please choose an available bed from the selected ward.","error");}
+  const x=await run("admit",()=>api("/api/admissions",{method:"POST",body:JSON.stringify({patient_id:patientId,ward_id:wardId,bed_id:bedId,admitted_by:me.id,source:$("aSource").value,reason_for_admission:$("aReason").value})}),"admissionOut","Patient admitted");
+  if(x){$("aLookup").value=x.id;$("vAdmission").value=x.id;await loadAdmissionOptions();}
+}
+
 async function loadAdmission(){try{result("admissionOut",await api(`/api/admissions/${+$('aLookup').value}`),"Admission details")}catch(e){notify(humanError(e.message),"error")}}
 function now(){return new Date().toISOString()}
 async function recordVitals(){run("vitals",()=>{const status=$("vStatus").value,vals={recorded_by:me.id,recorded_at:now(),measurement_status:status,not_measured_reason:$("vReason").value||null,notes:null};for(const [k,id] of [["systolic_bp","sys"],["diastolic_bp","dia"],["pulse","pulse"],["temperature","temp"],["respiratory_rate","rr"],["spo2","spo2"]])if($(id).value!=="")vals[k]=Number($(id).value);return api(`/api/admissions/${+$('vAdmission').value}/vitals`,{method:"POST",body:JSON.stringify(vals)})},"vitalOut","Vitals recorded")}
@@ -224,7 +289,10 @@ async function discharge(){if(!requireRole("discharge"))return;if(!confirm("Disc
 async function createUser(){run("admin",()=>api("/api/users",{method:"POST",body:JSON.stringify({username:$("uName").value,password:$("uPass").value,full_name:$("uFull").value,role:$("uRole").value})}),"usersOut","User created");loadUsers()}
 async function loadUsers(){if(!requireRole("admin"))return;try{result("usersOut",await api("/api/users"),"CARELINK users")}catch(e){notify(humanError(e.message),"error")}}
 async function loadAudit(){run("admin",()=>api("/api/audit"),"auditOut","Audit log loaded")}
-document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".tabpane").forEach(x=>x.classList.add("hidden"));b.classList.add("active");$(b.dataset.tab).classList.remove("hidden")});
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".tabpane").forEach(x=>x.classList.add("hidden"));b.classList.add("active");$(b.dataset.tab).classList.remove("hidden");if(b.dataset.tab==="admission")loadAdmissionOptions()});
+$("aWard")?.addEventListener("change",()=>{refreshBedChoices();updateAdmissionButton()});
+$("aBed")?.addEventListener("change",updateAdmissionButton);
+$("aPatient")?.addEventListener("change",updateAdmissionButton);
 if(token)start();
 </script>
 </body></html>

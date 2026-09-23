@@ -78,3 +78,38 @@ def test_bootstrap_can_only_run_once_and_wrong_password_fails():
     c.headers.clear()
     r = c.post("/api/auth/login", json={"username":"admin","password":"wrong-password"})
     assert r.status_code == 401
+
+
+def test_admission_options_only_returns_available_beds_and_invalid_ward_bed_is_rejected():
+    c = client(); bootstrap_login(c)
+    facility = c.post("/api/facilities", json={"name":"Options Hospital","description":"Main"}).json()
+    ward_a = c.post("/api/wards", json={"facility_id":facility["id"],"name":"Ward A"}).json()
+    ward_b = c.post("/api/wards", json={"facility_id":facility["id"],"name":"Ward B"}).json()
+    bed_a = c.post("/api/beds", json={"ward_id":ward_a["id"],"bed_number":"A-01"}).json()
+    bed_b = c.post("/api/beds", json={"ward_id":ward_b["id"],"bed_number":"B-01"}).json()
+    patient = c.post("/api/patients", json={
+        "full_name":"Options Patient","date_of_birth":"1992-02-02","sex":"M","allergy_status":False
+    }).json()
+
+    options = c.get("/api/admission-options")
+    assert options.status_code == 200
+    assert {b["id"] for b in options.json()["beds"]} == {bed_a["id"], bed_b["id"]}
+
+    admitted = c.post("/api/admissions", json={
+        "patient_id":patient["id"],"ward_id":ward_a["id"],"bed_id":bed_a["id"],
+        "admitted_by":1,"source":"ER","reason_for_admission":"Observation"
+    })
+    assert admitted.status_code == 201
+
+    options = c.get("/api/admission-options").json()
+    assert {b["id"] for b in options["beds"]} == {bed_b["id"]}
+
+    mismatch_patient = c.post("/api/patients", json={
+        "full_name":"Mismatch Patient","date_of_birth":"1993-03-03","sex":"F","allergy_status":False
+    }).json()
+    mismatch = c.post("/api/admissions", json={
+        "patient_id":mismatch_patient["id"],"ward_id":ward_a["id"],"bed_id":bed_b["id"],
+        "admitted_by":1,"source":"ER","reason_for_admission":"Wrong pairing"
+    })
+    assert mismatch.status_code == 422
+    assert mismatch.json()["detail"] == "bed does not belong to ward"
