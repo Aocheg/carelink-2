@@ -53,6 +53,7 @@ uvicorn app.main:app --reload
 
 Visit `/docs` for OpenAPI, `/app` for the frontend, and `/health` for the health response. Database table creation is an explicit development command, never automatic.
 
+
 ## Development log
 
 - 2026-09-19: Completed the backend workflow implementation and initial browser workspace. Documented alert rule: SpO₂ <90% or systolic BP ≥180 generates a high-severity abnormal-vital alert.
